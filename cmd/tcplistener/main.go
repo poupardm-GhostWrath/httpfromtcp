@@ -1,6 +1,4 @@
-// HTTP From TCP
-// main package
-// main function
+// TCP Listener
 package main
 
 import (
