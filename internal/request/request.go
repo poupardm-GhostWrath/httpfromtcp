@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+
+	"github.com/poupardm-GhostWrath/httpfromtcp/internal/headers"
 )
 
 const (
@@ -18,12 +21,16 @@ type requestState int
 
 const (
 	requestStateInitialized requestState = iota
+	requestStateParsingHeaders
+	requestStateParsingBody
 	requestStateDone
 )
 
 type Request struct {
 	state       requestState
 	RequestLine RequestLine
+	Headers     headers.Headers
+	Body        []byte
 }
 
 type RequestLine struct {
@@ -35,7 +42,7 @@ type RequestLine struct {
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	buf := make([]byte, bufferSize)
 	readToIndex := 0
-	r := &Request{state: requestStateInitialized}
+	r := &Request{state: requestStateInitialized, Headers: headers.NewHeaders()}
 
 	for r.state != requestStateDone {
 		// Check Buffer
@@ -50,7 +57,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				if r.state != requestStateDone {
-					return nil, fmt.Errorf("incomplete request")
+					return nil, fmt.Errorf("incomplete request, in state: %d, read n bytes on EOF: %d", r.state, numBytesRead)
 				}
 				break
 			}
@@ -129,6 +136,22 @@ func requestLineFromString(str string) (*RequestLine, error) {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
+	totalBytesParsed := 0
+
+	for r.state != requestStateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return 0, err
+		}
+		totalBytesParsed += n
+		if n == 0 {
+			break
+		}
+	}
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingle(data []byte) (int, error) {
 	switch r.state {
 	case requestStateInitialized:
 		requestLine, num, err := parseRequestLine(data)
@@ -139,8 +162,36 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, nil
 		}
 		r.RequestLine = *requestLine
-		r.state = requestStateDone
+		r.state = requestStateParsingHeaders
 		return num, nil
+	case requestStateParsingHeaders:
+		num, done, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if done {
+			r.state = requestStateParsingBody
+		}
+		return num, nil
+	case requestStateParsingBody:
+		val, ok := r.Headers.Get("Content-Length")
+		if !ok {
+			// No Content-Length Header
+			r.state = requestStateDone
+			return 0, nil
+		}
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return 0, err
+		}
+		r.Body = append(r.Body, data...)
+		if len(r.Body) > n {
+			return 0, fmt.Errorf("error: body is greater than the Content-Length")
+		}
+		if len(r.Body) == n {
+			r.state = requestStateDone
+		}
+		return len(data), nil
 	case requestStateDone:
 		return 0, fmt.Errorf("error: trying to read data in a done state")
 	default:
