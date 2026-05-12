@@ -88,3 +88,13 @@ func (h Headers) Get(key string) (string, bool) {
 	val, ok := h[key]
 	return val, ok
 }
+
+func (h Headers) Override(key, value string) {
+	key = strings.ToLower(key)
+	h[key] = value
+}
+
+func (h Headers) Delete(key string) {
+	key = strings.ToLower(key)
+	delete(h, key)
+}

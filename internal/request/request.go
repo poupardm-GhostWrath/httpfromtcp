@@ -14,7 +14,7 @@ import (
 
 const (
 	crlf       = "\r\n"
-	bufferSize = 8
+	bufferSize = 32
 )
 
 type requestState int
